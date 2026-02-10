@@ -89,7 +89,15 @@ Whether you're using an IAM role (OIDC) or IAM user (static credentials), attach
 
 **1. Elastic Beanstalk Permissions**
 
-Attach the AWS managed policy **`AdministratorAccess-AWSElasticBeanstalk`**. This policy grants the permissions that Elastic Beanstalk requires from the calling principal to create and manage environments, including interactions with EC2, Auto Scaling, CloudFormation, and other services that Elastic Beanstalk orchestrates during deployment.
+You have two options for granting Elastic Beanstalk permissions:
+
+**Option A: AWS Managed Policy (Simplest)**
+
+Attach the AWS managed policy **[`AdministratorAccess-AWSElasticBeanstalk`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess-AWSElasticBeanstalk.html)**. This policy grants the permissions that Elastic Beanstalk requires from the calling principal to create and manage environments, including interactions with EC2, Auto Scaling, CloudFormation, and other services that Elastic Beanstalk orchestrates during deployment.
+
+**Option B: Scoped-Down Custom Policy (Recommended for Production)**
+
+For tighter security, it's recommended to scope down the permissions in the [`AdministratorAccess-AWSElasticBeanstalk`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess-AWSElasticBeanstalk.html) managed policy based on your specific needs. Start with the AWS managed policy as a baseline and restrict resources to only what your deployment requires. This approach ensures you maintain the core functionality while following the principle of least privilege.
 
 **2. S3 Bucket Permissions**
 
@@ -152,7 +160,7 @@ See: [Managing Elastic Beanstalk Service Roles](https://docs.aws.amazon.com/elas
 
 ### Step 4: Add GitHub Secrets
 
-Add the following secrets to your GitHub repository (Settings → Secrets and variables → Actions):
+Add the following secrets to your GitHub repository (Settings → Secrets and variables → Actions → Repository secrets):
 
 **If using OIDC:**
 
@@ -168,6 +176,8 @@ Add the following secrets to your GitHub repository (Settings → Secrets and va
 | `AWS_SECRET_ACCESS_KEY` | Secret access key for your IAM user |
 
 ## Quick Start
+
+Create a workflow file in your repository at `.github/workflows/deploy-to-elastic-beanstalk.yml` (or any name you prefer under `.github/workflows/`), then follow the examples below for file contents.
 
 ### Using OIDC (Recommended)
 
@@ -278,17 +288,47 @@ jobs:
 | Input | Description |
 |-------|-------------|
 | `aws-region` | AWS region for deployment (e.g., `us-east-1`, `eu-west-1`) |
-| `application-name` | Elastic Beanstalk application name (1-100 characters) |
-| `environment-name` | Elastic Beanstalk environment name (4-40 characters, alphanumeric and hyphens only) |
+| `application-name` | Elastic Beanstalk application name |
+| `environment-name` | Elastic Beanstalk environment name |
 
-### Platform Configuration (One Required)
+### Platform Configuration (Required Only When Creating Environment)
 
-You must provide exactly one of the following:
+When **creating a new Elastic Beanstalk environment**, you must provide **exactly one** of the following:
 
 | Input | Description |
 |-------|-------------|
-| `solution-stack-name` | Solution stack name (e.g., `64bit Amazon Linux 2023 v4.3.0 running Python 3.11`) |
-| `platform-arn` | Platform ARN (e.g., `arn:aws:elasticbeanstalk:us-east-1::platform/Python 3.11 running on 64bit Amazon Linux 2023/4.3.0`) |
+| `solution-stack-name` | Solution stack name (e.g., `64bit Amazon Linux 2023 v4.9.2 running Python 3.14`) |
+| `platform-arn` | Platform ARN (e.g., `arn:aws:elasticbeanstalk:us-east-1::platform/Python 3.14 running on 64bit Amazon Linux 2023/4.9.2`) |
+
+You can find the list of supported platforms and example values in the AWS Elastic Beanstalk documentation for [supported platforms](https://docs.aws.amazon.com/elasticbeanstalk/latest/platforms/platforms-supported.html).
+
+When **deploying to an existing environment**, these inputs are **optional**. The existing environment's platform configuration will be used if neither is provided.
+
+> [!IMPORTANT]
+> When you specify `solution-stack-name` or `platform-arn`, each deployment updates your environment to that platform version if it differs from the current one. To deploy without changing the platform version, omit both options.
+
+> [!TIP]
+> Platform branch ARNs (without a version suffix, e.g., `arn:aws:elasticbeanstalk:::platform/Python 3.14 running on 64bit Amazon Linux 2023`) automatically select the latest version within that branch at deployment time.
+
+To use **managed platform updates**, see the AWS docs for [managed updates](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environment-platform-update-managed.html) and configure the following `option-settings` in your workflow:
+
+```yaml
+option-settings: |
+  [
+    {
+      "Namespace": "aws:elasticbeanstalk:managedactions",
+      "OptionName": "ManagedActionsEnabled",
+      "Value": "true"
+    },
+    {
+      "Namespace": "aws:elasticbeanstalk:managedactions:platformupdate",
+      "OptionName": "UpdateLevel",
+      "Value": "minor"
+    }
+  ]
+```
+
+This enables managed platform updates and configures Elastic Beanstalk to automatically apply **minor** and **patch** platform version updates.
 
 ### Optional Inputs
 
@@ -304,7 +344,7 @@ You must provide exactly one of the following:
 | `deployment-timeout` | Maximum wait time for deployment (seconds, 60-3600) | `900` |
 | `max-retries` | Maximum retry attempts for failed API calls (0-10) | `2` |
 | `retry-delay` | Initial delay between retries in seconds (1-60, uses exponential backoff) | `5` |
-| `use-existing-application-version-if-available` | Reuse existing application version if it exists (skips S3 upload) | `true` |
+| `use-existing-application-version-if-available` | Reuse existing application version if it exists (skips S3 upload and application version creation) | `true` |
 | `create-s3-bucket-if-not-exists` | Create S3 bucket if it doesn't exist | `true` |
 | `s3-bucket-name` | Custom S3 bucket name for deployment packages | `elasticbeanstalk-{region}-{accountId}` |
 | `exclude-patterns` | Comma-separated glob patterns to exclude from auto-created packages | None |
@@ -374,10 +414,6 @@ aws elasticbeanstalk list-available-solution-stacks --region us-east-1 | grep -i
 **"option-settings must include IamInstanceProfile"**
 
 When creating a new environment, you must provide IAM roles in `option-settings`. See [Option Settings](#option-settings).
-
-**"Environment name must be 4-40 characters"**
-
-Environment names must be 4-40 characters, contain only alphanumeric characters and hyphens, and cannot start or end with a hyphen.
 
 **S3 Access Denied**
 
