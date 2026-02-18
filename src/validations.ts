@@ -54,7 +54,7 @@ function validateRequiredInputs() {
 
 function validateNumericInputs() {
   const deploymentTimeoutInput = core.getInput('deployment-timeout') || '900';
-  const maxRetriesInput = core.getInput('max-retries') || '3';
+  const maxRetriesInput = core.getInput('max-retries') || '2';
   const retryDelayInput = core.getInput('retry-delay') || '5';
 
   const deploymentTimeout = parseInt(deploymentTimeoutInput, 10);

@@ -258,7 +258,7 @@ describe('Validation Functions', () => {
 
       expect(result.valid).toBe(true);
       expect(result.deploymentTimeout).toBe(900);
-      expect(result.maxRetries).toBe(3);
+      expect(result.maxRetries).toBe(2);
       expect(result.retryDelay).toBe(5);
     });
 
