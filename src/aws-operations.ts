@@ -2,7 +2,9 @@ import * as core from '@actions/core';
 import {
   CreateApplicationVersionCommand,
   UpdateEnvironmentCommand,
+  UpdateEnvironmentCommandInput,
   CreateEnvironmentCommand,
+  CreateEnvironmentCommandInput,
   DescribeEnvironmentsCommand,
   DescribeApplicationVersionsCommand,
 } from '@aws-sdk/client-elastic-beanstalk';
@@ -455,19 +457,14 @@ export async function updateEnvironment(
 
   await retryWithBackoff(
     async () => {
-      const commandParams: any = {
+      const commandParams: UpdateEnvironmentCommandInput = {
         ApplicationName: applicationName,
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         OptionSettings: parsedOptionSettings,
+        ...(solutionStackName ? { SolutionStackName: solutionStackName } : {}),
+        ...(platformArn ? { PlatformArn: platformArn } : {}),
       };
-
-      // Only set one of SolutionStackName or PlatformArn
-      if (solutionStackName) {
-        commandParams.SolutionStackName = solutionStackName;
-      } else if (platformArn) {
-        commandParams.PlatformArn = platformArn;
-      }
 
       const command = new UpdateEnvironmentCommand(commandParams);
 
@@ -501,20 +498,15 @@ export async function createEnvironment(
 
   await retryWithBackoff(
     async () => {
-      const commandParams: any = {
+      const commandParams: CreateEnvironmentCommandInput = {
         ApplicationName: applicationName,
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         CNAMEPrefix: environmentName,
         OptionSettings: optionSettings,
+        ...(solutionStackName ? { SolutionStackName: solutionStackName } : {}),
+        ...(platformArn ? { PlatformArn: platformArn } : {}),
       };
-
-      // Only set one of SolutionStackName or PlatformArn
-      if (solutionStackName) {
-        commandParams.SolutionStackName = solutionStackName;
-      } else if (platformArn) {
-        commandParams.PlatformArn = platformArn;
-      }
 
       const command = new CreateEnvironmentCommand(commandParams);
 
