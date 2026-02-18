@@ -88,6 +88,7 @@ jest.mock('@aws-sdk/client-sts', () => ({
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
+import archiver from 'archiver';
 
 // Import functions to test
 import { run } from '../main';
@@ -171,11 +172,11 @@ describe('Main Functions', () => {
 
       expect(result.path).toBe('deploy-v1.0.0.zip');
       
-      const archiver = require('archiver');
       expect(archiver).toHaveBeenCalledWith('zip');
-      
+
       // Verify the mock archive methods were called
-      const mockArchiveInstance = archiver();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mockArchiveInstance = (archiver as any)();
       expect(mockArchiveInstance.pipe).toHaveBeenCalled();
       expect(mockArchiveInstance.glob).toHaveBeenCalledWith('**/*', { 
         dot: true,
