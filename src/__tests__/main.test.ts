@@ -315,13 +315,13 @@ describe('Main Functions', () => {
   describe('createEnvironment', () => {
     it('should create environment', async () => {
       mockSend.mockResolvedValue({});
-      await createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[{"Namespace":"aws:autoscaling:launchconfiguration","OptionName":"IamInstanceProfile","Value":"profile"}]', 'stack', undefined, 3, 1);
+      await createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[{"Namespace":"aws:autoscaling:launchconfiguration","OptionName":"IamInstanceProfile","Value":"profile"}]', 'stack', undefined, undefined, 3, 1);
       expect(mockSend).toHaveBeenCalledTimes(1); // 1 create
     });
 
     it('should create environment with custom options', async () => {
       mockSend.mockResolvedValue({});
-      await createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[{"Namespace":"test","OptionName":"test","Value":"test"}]', 'stack', undefined, 3, 1);
+      await createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[{"Namespace":"test","OptionName":"test","Value":"test"}]', 'stack', undefined, undefined, 3, 1);
       expect(mockSend).toHaveBeenCalledTimes(1);
     });
   });
