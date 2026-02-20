@@ -131,7 +131,8 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  const errorMessage = `${operationName} failed after ${totalAttempts} attempts (${maxRetries} retries): ${lastError?.message}`;
+  const retryWord = maxRetries === 1 ? 'retry' : 'retries';
+  const errorMessage = `${operationName} failed after ${totalAttempts} attempts (${maxRetries} ${retryWord}): ${lastError?.message}`;
   core.error(errorMessage);
   throw new Error(errorMessage);
 }

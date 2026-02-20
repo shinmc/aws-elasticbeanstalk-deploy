@@ -225,7 +225,7 @@ describe('S3 Operations', () => {
         .mockRejectedValueOnce(invalidNameError); // CreateBucketCommand attempt 2 fails (retry 1)
 
       await expect(createS3Bucket(mockClients, 'us-west-2', 'Invalid_Bucket_Name', '123456789012', 1, 1))
-        .rejects.toThrow('Create S3 bucket failed after 2 attempts (1 retries): The specified bucket is not valid');
+        .rejects.toThrow('Create S3 bucket failed after 2 attempts (1 retry): The specified bucket is not valid');
 
       expect(mockSend).toHaveBeenCalledTimes(3); // 1 HeadBucket + 2 CreateBucket attempts
     });
