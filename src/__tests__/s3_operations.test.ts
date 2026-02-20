@@ -43,7 +43,6 @@ jest.mock('@aws-sdk/client-s3', () => ({
   PutObjectCommand: jest.fn(),
   HeadBucketCommand: jest.fn(),
   CreateBucketCommand: jest.fn(),
-  GetBucketAclCommand: jest.fn(),
 }));
 
 jest.mock('@aws-sdk/client-elastic-beanstalk', () => ({
@@ -77,12 +76,8 @@ describe('S3 Operations', () => {
   describe('uploadToS3', () => {
     it('should upload file to S3 with version label in key', async () => {
       mockedFs.statSync.mockReturnValue({ size: 1024 } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockResolvedValueOnce({}); // PutObject
 
       const result = await uploadToS3(mockClients, 'us-east-1', '123456789012', 'my-app', 'v1.0.0', 'app.zip', 3, 1, false);
@@ -96,12 +91,8 @@ describe('S3 Operations', () => {
 
     it('should handle different file extensions', async () => {
       mockedFs.statSync.mockReturnValue({ size: 2048 } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'FULL_CONTROL' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockResolvedValueOnce({}); // PutObject
 
       const result = await uploadToS3(mockClients, 'us-west-2', '987654321098', 'app', 'abc123', 'deploy.jar', 3, 1, false);
@@ -114,12 +105,8 @@ describe('S3 Operations', () => {
 
     it('should use correct bucket naming format', async () => {
       mockedFs.statSync.mockReturnValue({ size: 512 } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('test'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockResolvedValueOnce({}); // PutObject
 
       const result = await uploadToS3(mockClients, 'eu-west-1', '111222333444', 'test-app', 'v2.0.0', 'package.zip', 3, 1, false);
@@ -130,59 +117,54 @@ describe('S3 Operations', () => {
 
   describe('createS3Bucket', () => {
     it('should not create bucket if it already exists', async () => {
-      mockSend
-        .mockResolvedValueOnce({}) // HeadBucketCommand returns success (bucket exists)
-        .mockResolvedValueOnce({ // GetBucketAclCommand verifies ownership
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'FULL_CONTROL' }]
-        });
+      mockSend.mockResolvedValueOnce({}); // HeadBucket with ExpectedBucketOwner succeeds
 
       await createS3Bucket(mockClients, 'us-east-1', 'existing-bucket', '123456789012', 3, 1);
 
-      expect(mockSend).toHaveBeenCalledTimes(2); // HeadBucket + GetBucketAcl
+      expect(mockSend).toHaveBeenCalledTimes(1); // HeadBucket only (ownership verified via ExpectedBucketOwner)
     });
 
     it('should create bucket if it does not exist', async () => {
       mockSend
-        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucketCommand throws error (bucket doesn't exist)
-        .mockResolvedValueOnce({}) // CreateBucketCommand creates the bucket
-        .mockResolvedValueOnce({ // GetBucketAclCommand verifies ownership
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        });
+        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucket throws (bucket doesn't exist)
+        .mockResolvedValueOnce({}); // CreateBucket succeeds
 
       await createS3Bucket(mockClients, 'us-east-1', 'new-bucket', '123456789012', 3, 1);
 
-      expect(mockSend).toHaveBeenCalledTimes(3); // HeadBucket + CreateBucket + GetBucketAcl
+      expect(mockSend).toHaveBeenCalledTimes(2); // HeadBucket + CreateBucket
     });
 
     it('should create bucket with location constraint for non-us-east-1 regions', async () => {
       mockSend
-        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucketCommand throws error (bucket doesn't exist)
-        .mockResolvedValueOnce({}) // CreateBucketCommand creates bucket with LocationConstraint
-        .mockResolvedValueOnce({ // GetBucketAclCommand verifies ownership
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'FULL_CONTROL' }]
-        });
+        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucket throws (bucket doesn't exist)
+        .mockResolvedValueOnce({}); // CreateBucket with LocationConstraint succeeds
 
       await createS3Bucket(mockClients, 'eu-central-1', 'euro-bucket', '123456789012', 3, 1);
 
-      expect(mockSend).toHaveBeenCalledTimes(3); // HeadBucket + CreateBucket + GetBucketAcl
+      expect(mockSend).toHaveBeenCalledTimes(2); // HeadBucket + CreateBucket
     });
 
     it('should handle retry logic on failure', async () => {
       mockSend
-        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucketCommand throws error (bucket doesn't exist)
-        .mockRejectedValueOnce(new Error('NetworkError')) // CreateBucketCommand attempt 1 fails with network error
-        .mockResolvedValueOnce({}) // CreateBucketCommand attempt 2 succeeds
-        .mockResolvedValueOnce({ // GetBucketAclCommand verifies ownership
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        });
+        .mockRejectedValueOnce(new Error('NoSuchBucket')) // HeadBucket throws (bucket doesn't exist)
+        .mockRejectedValueOnce(new Error('NetworkError')) // CreateBucket attempt 1 fails
+        .mockResolvedValueOnce({}); // CreateBucket attempt 2 succeeds
 
       await createS3Bucket(mockClients, 'us-west-2', 'retry-bucket', '123456789012', 3, 1);
 
-      expect(mockSend).toHaveBeenCalledTimes(4); // HeadBucket + 2 CreateBucket attempts + GetBucketAcl
+      expect(mockSend).toHaveBeenCalledTimes(3); // HeadBucket + 2 CreateBucket attempts
+    });
+
+    it('should throw a clear error when bucket is owned by a different account', async () => {
+      const forbiddenError = new Error('Forbidden');
+      (forbiddenError as any).$metadata = { httpStatusCode: 403 };
+
+      mockSend.mockRejectedValueOnce(forbiddenError); // HeadBucket returns 403
+
+      await expect(createS3Bucket(mockClients, 'us-east-1', 'someone-elses-bucket', '123456789012', 3, 1))
+        .rejects.toThrow("S3 bucket 'someone-elses-bucket' exists but is not owned by this AWS account");
+
+      expect(mockSend).toHaveBeenCalledTimes(1); // HeadBucket only, no create attempt
     });
 
     it('should bubble up AccessDenied permissions error without retrying', async () => {
@@ -235,33 +217,25 @@ describe('S3 Operations', () => {
     it('should bubble up S3 upload permissions error without retrying', async () => {
       const uploadError = new Error('Access Denied');
       uploadError.name = 'AccessDenied';
-      
+
       mockedFs.statSync.mockReturnValue({ size: 1024 } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        })
-        .mockRejectedValueOnce(uploadError); // First PutObject attempt fails with non-retryable AccessDenied
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
+        .mockRejectedValueOnce(uploadError); // PutObject fails with non-retryable AccessDenied
 
       await expect(uploadToS3(mockClients, 'us-east-1', '123456789012', 'my-app', 'v1.0.0', 'app.zip', 2, 1, false))
         .rejects.toThrow('Access Denied');
 
-      expect(mockSend).toHaveBeenCalledTimes(2); // 1 GetBucketAcl + 1 PutObject
+      expect(mockSend).toHaveBeenCalledTimes(2); // 1 HeadBucket + 1 PutObject
     });
 
     it('should bubble up S3 NoSuchBucket error during upload', async () => {
       const noSuchBucketError = new Error('The specified bucket does not exist');
       noSuchBucketError.name = 'NoSuchBucket';
-      
+
       mockedFs.statSync.mockReturnValue({ size: 2048 } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('test-content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'FULL_CONTROL' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockRejectedValueOnce(noSuchBucketError) // PutObject attempt 1 fails
         .mockRejectedValueOnce(noSuchBucketError) // PutObject attempt 2 fails (retry 1)
         .mockRejectedValueOnce(noSuchBucketError) // PutObject attempt 3 fails (retry 2)
@@ -270,7 +244,7 @@ describe('S3 Operations', () => {
       await expect(uploadToS3(mockClients, 'eu-central-1', '987654321098', 'test-app', 'v2.0.0', 'deploy.jar', 3, 1, false))
         .rejects.toThrow('Upload to S3 failed after 4 attempts (3 retries): The specified bucket does not exist');
 
-      expect(mockSend).toHaveBeenCalledTimes(5); // 1 GetBucketAcl + 4 PutObject attempts
+      expect(mockSend).toHaveBeenCalledTimes(5); // 1 HeadBucket + 4 PutObject attempts
     });
   });
 
@@ -289,12 +263,8 @@ describe('S3 Operations', () => {
     it('should accept deployment package under 500MB limit', async () => {
       const validPackageSize = 450 * 1024 * 1024; // 450 MB
       mockedFs.statSync.mockReturnValue({ size: validPackageSize } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('valid-content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'WRITE' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockResolvedValueOnce({}); // PutObject
 
       const result = await uploadToS3(mockClients, 'us-west-2', '123456789012', 'my-app', 'v2.0.0', 'valid-app.zip', 3, 1, false);
@@ -303,18 +273,14 @@ describe('S3 Operations', () => {
         bucket: 'elasticbeanstalk-us-west-2-123456789012',
         key: 'my-app/v2.0.0.zip',
       });
-      expect(mockSend).toHaveBeenCalledTimes(2); // GetBucketAcl + PutObject
+      expect(mockSend).toHaveBeenCalledTimes(2); // HeadBucket + PutObject
     });
 
     it('should accept deployment package exactly at 500MB limit', async () => {
       const exactLimitSize = 500 * 1024 * 1024; // Exactly 500 MB
       mockedFs.statSync.mockReturnValue({ size: exactLimitSize } as any);
-      mockedFs.readFileSync.mockReturnValue(Buffer.from('exact-limit-content'));
       mockSend
-        .mockResolvedValueOnce({ // GetBucketAcl
-          Owner: { ID: 'owner-id' },
-          Grants: [{ Grantee: { ID: 'owner-id' }, Permission: 'FULL_CONTROL' }]
-        })
+        .mockResolvedValueOnce({}) // HeadBucket (ownership check)
         .mockResolvedValueOnce({}); // PutObject
 
       const result = await uploadToS3(mockClients, 'eu-west-1', '987654321098', 'test-app', 'v1.0.0', 'exact-app.zip', 3, 1, false);
@@ -323,7 +289,7 @@ describe('S3 Operations', () => {
         bucket: 'elasticbeanstalk-eu-west-1-987654321098',
         key: 'test-app/v1.0.0.zip',
       });
-      expect(mockSend).toHaveBeenCalledTimes(2); // GetBucketAcl + PutObject
+      expect(mockSend).toHaveBeenCalledTimes(2); // HeadBucket + PutObject
     });
 
     it('should reject deployment package just over 500MB limit', async () => {
