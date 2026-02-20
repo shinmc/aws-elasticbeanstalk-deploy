@@ -505,8 +505,11 @@ export async function createEnvironment(
         VersionLabel: versionLabel,
         OptionSettings: optionSettings,
         ...(cnamePrefix ? { CNAMEPrefix: cnamePrefix } : {}),
-        ...(solutionStackName ? { SolutionStackName: solutionStackName } : {}),
-        ...(platformArn ? { PlatformArn: platformArn } : {}),
+        ...(solutionStackName
+          ? { SolutionStackName: solutionStackName }
+          : platformArn
+            ? { PlatformArn: platformArn }
+            : {}),
       };
 
       const command = new CreateEnvironmentCommand(commandParams);
