@@ -35,10 +35,10 @@ function validateRequiredInputs() {
     return { valid: false };
   }
 
-  // Validate AWS region format (e.g., us-east-1, eu-west-2)
-  const regionPattern = /^[a-z]{2}-[a-z]+-\d{1}$/;
+  // Validate AWS region format (e.g., us-east-1, eu-west-2, us-gov-east-1)
+  const regionPattern = /^(us(-gov)?|af|ap|ca|eu|il|me|sa)-(north|south|east|west|central|northeast|southeast|northwest|southwest)-\d$/;
   if (!regionPattern.test(awsRegion)) {
-    core.setFailed(`Invalid AWS region format: ${awsRegion}. Expected format like 'us-east-1'`);
+    core.setFailed(`Invalid AWS region format: ${awsRegion}. Expected format like 'us-east-1' or 'us-gov-east-1'`);
     return { valid: false };
   }
 
@@ -116,8 +116,8 @@ function validateNumericInputs() {
 
 function validateOptionalInputs() {
   const applicationVersionLabel = core.getInput('version-label') || process.env.GITHUB_SHA || `v${Date.now()}`;
-  const deploymentPackagePath = core.getInput('deployment-package-path');
-  const excludePatterns = core.getInput('exclude-patterns') || '';
+  const deploymentPackagePath = core.getInput('deployment-package-path').trim() || undefined;
+  const excludePatterns = core.getInput('exclude-patterns').trim() || '';
   const s3BucketName = core.getInput('s3-bucket-name') || undefined;
   const optionSettings = core.getInput('option-settings') || undefined;
 
@@ -160,8 +160,7 @@ function validateOptionalInputs() {
 
 function checkInputConflicts(inputs: Partial<Inputs>): void {
   // Check if deployment-package-path is provided WITH exclude-patterns
-  if (inputs.deploymentPackagePath && inputs.deploymentPackagePath.trim() !== '' &&
-      inputs.excludePatterns && inputs.excludePatterns.trim() !== '') {
+  if (inputs.deploymentPackagePath && inputs.excludePatterns !== '') {
     core.warning(
       'Both deployment-package-path and exclude-patterns are specified. ' +
       'exclude-patterns will be ignored since deployment-package-path takes precedence.'

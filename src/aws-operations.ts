@@ -20,7 +20,7 @@ import { parseJsonInput } from './validations';
 export const MAX_DEPLOYMENT_PACKAGE_SIZE_BYTES = 500 * 1024 * 1024;
 
 /**
- * Validate that option-settings contains required IAM roles when creating an environment.
+ * Validate that option-settings contains required IAM roles when creating an environment
  */
 export function validateOptionSettingsForCreate(optionSettingsJson: string | undefined): void {
   if (!optionSettingsJson) {
@@ -242,8 +242,14 @@ export async function environmentExists(
     core.info(`No environments found with name ${environmentName}`);
     return { exists: false };
   } catch (error) {
-    core.warning(`Error checking environment ${environmentName}: ${error}`);
-    return { exists: false };
+    const err = error as Error & { name?: string; $metadata?: { httpStatusCode?: number } };
+    const statusCode = err.$metadata?.httpStatusCode;
+    // Only treat "not found" responses as non-existent; rethrow real errors
+    // so callers receive a clear failure rather than a silent false negative.
+    if (statusCode === 404 || err.name === 'NoSuchEntityException') {
+      return { exists: false };
+    }
+    throw error;
   }
 }
 
@@ -319,11 +325,11 @@ export async function uploadToS3(
 
   await retryWithBackoff(
     async () => {
-      const fileContent = fs.readFileSync(packagePath);
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Body: fileContent,
+        Body: fs.createReadStream(packagePath),
+        ContentLength: fileSizeBytes,
       });
 
       await clients.getS3Client().send(command);
@@ -348,13 +354,10 @@ export async function createS3Bucket(
   maxRetries: number,
   retryDelay: number
 ): Promise<void> {
-  let bucketExists = false;
-  
   try {
     core.info('🪣 Checking if S3 bucket exists');
     await clients.getS3Client().send(new HeadBucketCommand({ Bucket: bucket }));
     core.info('✅ S3 bucket exists');
-    bucketExists = true;
   } catch (_error) {
     core.info('🪣 S3 bucket does not exist, Creating S3 bucket');
 
