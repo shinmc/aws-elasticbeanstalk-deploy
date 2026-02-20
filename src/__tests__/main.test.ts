@@ -42,6 +42,20 @@ jest.mock('path', () => ({
     const parts = p.split('.');
     return parts.length > 1 ? '.' + parts[parts.length - 1] : '';
   }),
+  resolve: jest.fn((...args) => {
+    // Simple resolve that handles absolute paths and normalizes ../
+    const last = args[args.length - 1];
+    const full = last.startsWith('/') ? last : args.join('/');
+    // Normalize by resolving .. segments
+    const parts = full.split('/');
+    const resolved: string[] = [];
+    for (const part of parts) {
+      if (part === '..') resolved.pop();
+      else if (part !== '.' && part !== '') resolved.push(part);
+    }
+    return '/' + resolved.join('/');
+  }),
+  sep: '/',
 }));
 
 jest.mock('archiver', () => {
@@ -155,13 +169,27 @@ describe('Main Functions', () => {
   });
 
   describe('createDeploymentPackage', () => {
+    const originalWorkspace = process.env.GITHUB_WORKSPACE;
+
+    beforeEach(() => {
+      process.env.GITHUB_WORKSPACE = '/workspace';
+    });
+
+    afterEach(() => {
+      if (originalWorkspace !== undefined) {
+        process.env.GITHUB_WORKSPACE = originalWorkspace;
+      } else {
+        delete process.env.GITHUB_WORKSPACE;
+      }
+    });
+
     it('should use existing package', async () => {
       mockedFs.existsSync.mockReturnValue(true);
       mockedFs.statSync.mockReturnValue({ isFile: () => true } as any);
       mockedFs.readFileSync.mockReturnValue(Buffer.from('test'));
-      const result = await createDeploymentPackage('/existing.zip', 'v1.0.0', '*.git*');
+      const result = await createDeploymentPackage('/workspace/existing.zip', 'v1.0.0', '*.git*');
 
-      expect(result.path).toBe('/existing.zip');
+      expect(result.path).toBe('/workspace/existing.zip');
     });
 
     it('should create new package', async () => {
@@ -171,16 +199,16 @@ describe('Main Functions', () => {
       const result = await createDeploymentPackage(undefined, 'v1.0.0', '*.git*,*.node*');
 
       expect(result.path).toBe('deploy-v1.0.0.zip');
-      
+
       const archiver = require('archiver');
       expect(archiver).toHaveBeenCalledWith('zip');
-      
+
       // Verify the mock archive methods were called
       const mockArchiveInstance = archiver();
       expect(mockArchiveInstance.pipe).toHaveBeenCalled();
-      expect(mockArchiveInstance.glob).toHaveBeenCalledWith('**/*', { 
+      expect(mockArchiveInstance.glob).toHaveBeenCalledWith('**/*', {
         dot: true,
-        ignore: ['*.git*', '*.node*'] 
+        ignore: ['*.git*', '*.node*']
       });
       expect(mockArchiveInstance.finalize).toHaveBeenCalled();
     });
@@ -189,9 +217,9 @@ describe('Main Functions', () => {
       mockedFs.existsSync.mockReturnValue(false);
 
       await expect(
-        createDeploymentPackage('/does/not/exist.zip', 'v1.0.0', '*.git*')
+        createDeploymentPackage('/workspace/does/not/exist.zip', 'v1.0.0', '*.git*')
       ).rejects.toThrow(
-        "deployment-package-path '/does/not/exist.zip' does not exist."
+        "deployment-package-path '/workspace/does/not/exist.zip' does not exist."
       );
     });
 
@@ -200,10 +228,22 @@ describe('Main Functions', () => {
       mockedFs.statSync.mockReturnValue({ isFile: () => false } as any);
 
       await expect(
-        createDeploymentPackage('/some/directory', 'v1.0.0', '*.git*')
+        createDeploymentPackage('/workspace/some/directory', 'v1.0.0', '*.git*')
       ).rejects.toThrow(
-        "deployment-package-path '/some/directory' is not a file."
+        "deployment-package-path '/workspace/some/directory' is not a file."
       );
+    });
+
+    it('should reject path traversal outside workspace', async () => {
+      await expect(
+        createDeploymentPackage('/etc/shadow', 'v1.0.0', '')
+      ).rejects.toThrow('resolves outside the workspace directory');
+    });
+
+    it('should reject relative path traversal outside workspace', async () => {
+      await expect(
+        createDeploymentPackage('/workspace/../etc/passwd', 'v1.0.0', '')
+      ).rejects.toThrow('resolves outside the workspace directory');
     });
   });
 

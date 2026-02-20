@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
+import * as path from 'path';
 import archiver from 'archiver';
 
 /**
@@ -15,15 +16,25 @@ export async function createDeploymentPackage(
   excludePatternsInput: string
 ): Promise<{ path: string }> {
   if (packagePath) {
-    // deployment-package-path explicitly provided by user
-    if (!fs.existsSync(packagePath)) {
+    // Validate that the package path is within the workspace to prevent path traversal
+    const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+    const resolvedPackagePath = path.resolve(packagePath);
+    const resolvedWorkspace = path.resolve(workspace);
+    if (!resolvedPackagePath.startsWith(resolvedWorkspace + path.sep) && resolvedPackagePath !== resolvedWorkspace) {
+      throw new Error(
+        `deployment-package-path '${packagePath}' resolves outside the workspace directory. ` +
+        'The path must point to a file within the GitHub Actions workspace.'
+      );
+    }
+
+    if (!fs.existsSync(resolvedPackagePath)) {
       throw new Error(
         `deployment-package-path '${packagePath}' does not exist. ` +
         'Either provide a valid file path or omit deployment-package-path to have the action create a package automatically.'
       );
     }
 
-    const stats = fs.statSync(packagePath);
+    const stats = fs.statSync(resolvedPackagePath);
     if (!stats.isFile()) {
       throw new Error(
         `deployment-package-path '${packagePath}' is not a file. ` +
@@ -31,8 +42,8 @@ export async function createDeploymentPackage(
       );
     }
 
-    core.info(`📦 Using existing deployment package: ${packagePath}`);
-    return { path: packagePath };
+    core.info(`📦 Using existing deployment package: ${resolvedPackagePath}`);
+    return { path: resolvedPackagePath };
   }
 
   // No explicit package path provided – create a new deployment package from the workspace.
