@@ -330,6 +330,7 @@ export async function uploadToS3(
         Key: key,
         Body: fs.createReadStream(packagePath),
         ContentLength: fileSizeBytes,
+        ExpectedBucketOwner: accountId,
       });
 
       await clients.getS3Client().send(command);
