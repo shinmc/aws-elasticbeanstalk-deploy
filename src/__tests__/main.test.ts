@@ -178,9 +178,9 @@ describe('Main Functions', () => {
       // Verify the mock archive methods were called
       const mockArchiveInstance = archiver();
       expect(mockArchiveInstance.pipe).toHaveBeenCalled();
-      expect(mockArchiveInstance.glob).toHaveBeenCalledWith('**/*', { 
+      expect(mockArchiveInstance.glob).toHaveBeenCalledWith('**/*', {
         dot: true,
-        ignore: ['*.git*', '*.node*'] 
+        ignore: expect.arrayContaining(['*.git*', '*.node*', '.git/**', '.env', '.env.*', '**/*.pem', '**/*.key'])
       });
       expect(mockArchiveInstance.finalize).toHaveBeenCalled();
     });

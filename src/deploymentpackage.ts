@@ -49,10 +49,25 @@ export async function createDeploymentPackage(
   return { path: zipFileName };
 }
 
+// Sensitive files/directories that should never be included in deployment packages.
+// Users can still override by providing their own deployment-package-path.
+const DEFAULT_EXCLUDE_PATTERNS = [
+  '.git/**',
+  '.env',
+  '.env.*',
+  '**/*.pem',
+  '**/*.key',
+  '.aws/**',
+  '.ssh/**',
+  '.npmrc',
+];
+
 /**
  * Creates a zip file using archiver
  */
 async function createZipFile(zipFileName: string, excludePatterns: string[]): Promise<void> {
+  const allExcludePatterns = [...DEFAULT_EXCLUDE_PATTERNS, ...excludePatterns];
+
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(zipFileName);
     const archive = archiver('zip');
@@ -61,7 +76,7 @@ async function createZipFile(zipFileName: string, excludePatterns: string[]): Pr
     archive.on('error', reject);
 
     archive.pipe(output);
-    archive.glob('**/*', { ignore: excludePatterns, dot: true });
+    archive.glob('**/*', { ignore: allExcludePatterns, dot: true });
     archive.finalize();
   });
 }
