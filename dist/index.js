@@ -92110,8 +92110,14 @@ async function environmentExists(clients, applicationName, environmentName) {
         return { exists: false };
     }
     catch (error) {
-        core.warning(`Error checking environment ${environmentName}: ${error}`);
-        return { exists: false };
+        const err = error;
+        const statusCode = err.$metadata?.httpStatusCode;
+        // Only treat "not found" responses as non-existent; rethrow real errors
+        // so callers receive a clear failure rather than a silent false negative.
+        if (statusCode === 404 || err.name === 'NoSuchEntityException') {
+            return { exists: false };
+        }
+        throw error;
     }
 }
 exports.environmentExists = environmentExists;
@@ -92157,11 +92163,11 @@ async function uploadToS3(clients, region, accountId, applicationName, versionLa
     core.info(`☁️  Uploading deployment package to S3`);
     core.info(`   File size: ${fileSizeMB} MB`);
     await retryWithBackoff(async () => {
-        const fileContent = fs.readFileSync(packagePath);
         const command = new client_s3_1.PutObjectCommand({
             Bucket: bucket,
             Key: key,
-            Body: fileContent,
+            Body: fs.createReadStream(packagePath),
+            ContentLength: fileSizeBytes,
         });
         await clients.getS3Client().send(command);
     }, maxRetries, retryDelay, 'Upload to S3');
@@ -92173,12 +92179,10 @@ exports.uploadToS3 = uploadToS3;
  * Create S3 bucket exists if not exists
  */
 async function createS3Bucket(clients, region, bucket, accountId, maxRetries, retryDelay) {
-    let bucketExists = false;
     try {
         core.info('🪣 Checking if S3 bucket exists');
         await clients.getS3Client().send(new client_s3_1.HeadBucketCommand({ Bucket: bucket }));
         core.info('✅ S3 bucket exists');
-        bucketExists = true;
     }
     catch (_error) {
         core.info('🪣 S3 bucket does not exist, Creating S3 bucket');
@@ -92796,10 +92800,10 @@ function validateRequiredInputs() {
         core.setFailed('Cannot specify both solution-stack-name and platform-arn. Use only one.');
         return { valid: false };
     }
-    // Validate AWS region format (e.g., us-east-1, eu-west-2)
-    const regionPattern = /^[a-z]{2}-[a-z]+-\d{1}$/;
+    // Validate AWS region format (e.g., us-east-1, eu-west-2, us-gov-east-1)
+    const regionPattern = /^(us(-gov)?|af|ap|ca|eu|il|me|sa)-(north|south|east|west|central|northeast|southeast|northwest|southwest)-\d$/;
     if (!regionPattern.test(awsRegion)) {
-        core.setFailed(`Invalid AWS region format: ${awsRegion}. Expected format like 'us-east-1'`);
+        core.setFailed(`Invalid AWS region format: ${awsRegion}. Expected format like 'us-east-1' or 'us-gov-east-1'`);
         return { valid: false };
     }
     return {
