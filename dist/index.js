@@ -92110,8 +92110,14 @@ async function environmentExists(clients, applicationName, environmentName) {
         return { exists: false };
     }
     catch (error) {
-        core.warning(`Error checking environment ${environmentName}: ${error}`);
-        return { exists: false };
+        const err = error;
+        const statusCode = err.$metadata?.httpStatusCode;
+        // Only treat "not found" responses as non-existent; rethrow real errors
+        // so callers receive a clear failure rather than a silent false negative.
+        if (statusCode === 404 || err.name === 'NoSuchEntityException') {
+            return { exists: false };
+        }
+        throw error;
     }
 }
 exports.environmentExists = environmentExists;
@@ -92157,11 +92163,11 @@ async function uploadToS3(clients, region, accountId, applicationName, versionLa
     core.info(`☁️  Uploading deployment package to S3`);
     core.info(`   File size: ${fileSizeMB} MB`);
     await retryWithBackoff(async () => {
-        const fileContent = fs.readFileSync(packagePath);
         const command = new client_s3_1.PutObjectCommand({
             Bucket: bucket,
             Key: key,
-            Body: fileContent,
+            Body: fs.createReadStream(packagePath),
+            ContentLength: fileSizeBytes,
         });
         await clients.getS3Client().send(command);
     }, maxRetries, retryDelay, 'Upload to S3');
