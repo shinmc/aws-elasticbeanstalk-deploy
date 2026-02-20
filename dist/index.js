@@ -92002,7 +92002,8 @@ exports.AWS_S3_REGIONS = [
  */
 async function retryWithBackoff(fn, maxRetries, retryDelay, operationName) {
     let lastError;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const totalAttempts = maxRetries + 1;
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
         try {
             return await fn();
         }
@@ -92020,14 +92021,15 @@ async function retryWithBackoff(fn, maxRetries, retryDelay, operationName) {
                 throw err;
             }
             lastError = err;
-            if (attempt < maxRetries) {
+            if (attempt < totalAttempts) {
                 const delay = retryDelay * Math.pow(2, attempt - 1);
-                core.warning(`❌ ${operationName} failed (attempt ${attempt}/${maxRetries}). Retrying in ${delay}s...`);
+                core.warning(`❌ ${operationName} failed (attempt ${attempt}/${totalAttempts}). Retrying in ${delay}s...`);
                 await new Promise(resolve => setTimeout(resolve, delay * 1000));
             }
         }
     }
-    const errorMessage = `${operationName} failed after ${maxRetries} attempts: ${lastError?.message}`;
+    const retryWord = maxRetries === 1 ? 'retry' : 'retries';
+    const errorMessage = `${operationName} failed after ${totalAttempts} attempts (${maxRetries} ${retryWord}): ${lastError?.message}`;
     core.error(errorMessage);
     throw new Error(errorMessage);
 }
@@ -92263,7 +92265,7 @@ exports.updateEnvironment = updateEnvironment;
 /**
  * Create a new environment
  */
-async function createEnvironment(clients, applicationName, environmentName, versionLabel, optionSettingsJson, solutionStackName, platformArn, maxRetries, retryDelay) {
+async function createEnvironment(clients, applicationName, environmentName, versionLabel, optionSettingsJson, solutionStackName, platformArn, cnamePrefix, maxRetries, retryDelay) {
     core.info(`🆕 Creating new environment: ${environmentName}`);
     const optionSettings = (0, validations_1.parseJsonInput)(optionSettingsJson, 'option-settings');
     await retryWithBackoff(async () => {
@@ -92271,16 +92273,14 @@ async function createEnvironment(clients, applicationName, environmentName, vers
             ApplicationName: applicationName,
             EnvironmentName: environmentName,
             VersionLabel: versionLabel,
-            CNAMEPrefix: environmentName,
             OptionSettings: optionSettings,
+            ...(cnamePrefix ? { CNAMEPrefix: cnamePrefix } : {}),
+            ...(solutionStackName
+                ? { SolutionStackName: solutionStackName }
+                : platformArn
+                    ? { PlatformArn: platformArn }
+                    : {}),
         };
-        // Only set one of SolutionStackName or PlatformArn
-        if (solutionStackName) {
-            commandParams.SolutionStackName = solutionStackName;
-        }
-        else if (platformArn) {
-            commandParams.PlatformArn = platformArn;
-        }
         const command = new client_elastic_beanstalk_1.CreateEnvironmentCommand(commandParams);
         await clients.getElasticBeanstalkClient().send(command);
     }, maxRetries, retryDelay, 'Create environment');
@@ -92443,7 +92443,7 @@ async function run() {
         if (!inputs.valid) {
             return;
         }
-        const { awsRegion, applicationName, environmentName, applicationVersionLabel, deploymentPackagePath, solutionStackName, platformArn, createEnvironmentIfNotExists, createApplicationIfNotExists, waitForDeployment, waitForEnvironmentRecovery, deploymentTimeout, maxRetries, retryDelay, useExistingApplicationVersionIfAvailable, createS3BucketIfNotExists, s3BucketName, excludePatterns, optionSettings } = inputs;
+        const { awsRegion, applicationName, environmentName, applicationVersionLabel, deploymentPackagePath, solutionStackName, platformArn, createEnvironmentIfNotExists, createApplicationIfNotExists, waitForDeployment, waitForEnvironmentRecovery, deploymentTimeout, maxRetries, retryDelay, useExistingApplicationVersionIfAvailable, createS3BucketIfNotExists, s3BucketName, cnamePrefix, excludePatterns, optionSettings } = inputs;
         core.startGroup('📋 Validating inputs');
         core.info(`Application: ${applicationName}`);
         core.info(`Environment: ${environmentName}`);
@@ -92503,7 +92503,7 @@ async function run() {
                 throw new Error('Either solution-stack-name or platform-arn must be provided when creating a new environment');
             }
             core.startGroup('🆕 Creating new environment');
-            await (0, aws_operations_1.createEnvironment)(clients, applicationName, environmentName, applicationVersionLabel, optionSettings, solutionStackName, platformArn, maxRetries, retryDelay);
+            await (0, aws_operations_1.createEnvironment)(clients, applicationName, environmentName, applicationVersionLabel, optionSettings, solutionStackName, platformArn, cnamePrefix, maxRetries, retryDelay);
             deploymentActionType = 'create';
             core.endGroup();
         }
@@ -92816,7 +92816,7 @@ function validateRequiredInputs() {
 }
 function validateNumericInputs() {
     const deploymentTimeoutInput = core.getInput('deployment-timeout') || '900';
-    const maxRetriesInput = core.getInput('max-retries') || '3';
+    const maxRetriesInput = core.getInput('max-retries') || '2';
     const retryDelayInput = core.getInput('retry-delay') || '5';
     const deploymentTimeout = parseInt(deploymentTimeoutInput, 10);
     const maxRetries = parseInt(maxRetriesInput, 10);
@@ -92869,6 +92869,7 @@ function validateOptionalInputs() {
     const deploymentPackagePath = core.getInput('deployment-package-path').trim() || undefined;
     const excludePatterns = core.getInput('exclude-patterns').trim() || '';
     const s3BucketName = core.getInput('s3-bucket-name') || undefined;
+    const cnamePrefix = core.getInput('cname-prefix') || undefined;
     const optionSettings = core.getInput('option-settings') || undefined;
     // Validate option-settings is valid JSON array if provided
     if (optionSettings) {
@@ -92901,6 +92902,7 @@ function validateOptionalInputs() {
         useExistingApplicationVersionIfAvailable,
         createS3BucketIfNotExists,
         s3BucketName,
+        cnamePrefix,
         excludePatterns,
         optionSettings
     };
