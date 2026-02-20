@@ -21,6 +21,7 @@ jest.mock('fs', () => ({
   writeFileSync: jest.fn(),
   existsSync: jest.fn(),
   statSync: jest.fn(),
+  createReadStream: jest.fn(() => 'mock-stream'),
   createWriteStream: jest.fn(() => ({
     on: jest.fn((event, callback) => {
       if (event === 'close') {
@@ -82,12 +83,6 @@ jest.mock('@aws-sdk/client-s3', () => ({
 jest.mock('@aws-sdk/client-sts', () => ({
   STSClient: jest.fn(() => ({ send: mockSend })),
   GetCallerIdentityCommand: jest.fn(),
-}));
-
-jest.mock('@aws-sdk/client-iam', () => ({
-  IAMClient: jest.fn(() => ({ send: mockSend })),
-  GetInstanceProfileCommand: jest.fn(),
-  GetRoleCommand: jest.fn(),
 }));
 
 import * as core from '@actions/core';
@@ -281,8 +276,16 @@ describe('Main Functions', () => {
       expect(result).toEqual({ exists: false, status: 'Terminated', health: 'Grey' });
     });
 
-    it('should return false on error', async () => {
+    it('should rethrow unexpected API errors', async () => {
       mockSend.mockRejectedValue(new Error('API Error'));
+      await expect(environmentExists(mockClients, 'app', 'env')).rejects.toThrow('API Error');
+    });
+
+    it('should return false on 404 not found', async () => {
+      const notFoundError = Object.assign(new Error('Not Found'), {
+        name: 'NoSuchEntityException',
+      });
+      mockSend.mockRejectedValue(notFoundError);
       const result = await environmentExists(mockClients, 'app', 'env');
       expect(result).toEqual({ exists: false });
     });
