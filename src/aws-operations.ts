@@ -462,8 +462,11 @@ export async function updateEnvironment(
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         OptionSettings: parsedOptionSettings,
-        ...(solutionStackName ? { SolutionStackName: solutionStackName } : {}),
-        ...(platformArn ? { PlatformArn: platformArn } : {}),
+        ...(solutionStackName
+          ? { SolutionStackName: solutionStackName }
+          : platformArn
+            ? { PlatformArn: platformArn }
+            : {}),
       };
 
       const command = new UpdateEnvironmentCommand(commandParams);
@@ -504,8 +507,11 @@ export async function createEnvironment(
         VersionLabel: versionLabel,
         CNAMEPrefix: environmentName,
         OptionSettings: optionSettings,
-        ...(solutionStackName ? { SolutionStackName: solutionStackName } : {}),
-        ...(platformArn ? { PlatformArn: platformArn } : {}),
+        ...(solutionStackName
+          ? { SolutionStackName: solutionStackName }
+          : platformArn
+            ? { PlatformArn: platformArn }
+            : {}),
       };
 
       const command = new CreateEnvironmentCommand(commandParams);
