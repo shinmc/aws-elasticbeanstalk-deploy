@@ -2,6 +2,7 @@ import * as core from '@actions/core';
 import {
   CreateApplicationVersionCommand,
   UpdateEnvironmentCommand,
+  UpdateEnvironmentCommandInput,
   CreateEnvironmentCommand,
   CreateEnvironmentCommandInput,
   DescribeEnvironmentsCommand,
@@ -452,14 +453,12 @@ export async function updateEnvironment(
 
   await retryWithBackoff(
     async () => {
-      const commandParams: any = {
+      const commandParams: UpdateEnvironmentCommandInput = {
         ApplicationName: applicationName,
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         OptionSettings: parsedOptionSettings,
       };
-
-      // Only set one of SolutionStackName or PlatformArn
       if (solutionStackName) {
         commandParams.SolutionStackName = solutionStackName;
       } else if (platformArn) {
@@ -504,13 +503,15 @@ export async function createEnvironment(
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         OptionSettings: optionSettings,
-        ...(cnamePrefix ? { CNAMEPrefix: cnamePrefix } : {}),
-        ...(solutionStackName
-          ? { SolutionStackName: solutionStackName }
-          : platformArn
-            ? { PlatformArn: platformArn }
-            : {}),
       };
+      if (cnamePrefix) {
+        commandParams.CNAMEPrefix = cnamePrefix;
+      }
+      if (solutionStackName) {
+        commandParams.SolutionStackName = solutionStackName;
+      } else if (platformArn) {
+        commandParams.PlatformArn = platformArn;
+      }
 
       const command = new CreateEnvironmentCommand(commandParams);
 

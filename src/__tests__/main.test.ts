@@ -310,6 +310,30 @@ describe('Main Functions', () => {
       await expect(updateEnvironment(mockClients, 'app', 'env', 'v1.0.0', 'invalid-json', '64bit Amazon Linux 2', undefined, 3, 1))
         .rejects.toThrow('Failed to parse option-settings');
     });
+
+    it('should use PlatformArn only when SolutionStackName is not set', async () => {
+      const { UpdateEnvironmentCommand } = require('@aws-sdk/client-elastic-beanstalk');
+      mockSend.mockResolvedValue({});
+      await updateEnvironment(mockClients, 'app', 'env', 'v1.0.0', undefined, undefined, 'arn:aws:elasticbeanstalk:us-east-1::platform/Node.js/1.0', 3, 1);
+      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ PlatformArn: 'arn:aws:elasticbeanstalk:us-east-1::platform/Node.js/1.0' })
+      );
+      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({ SolutionStackName: expect.anything() })
+      );
+    });
+
+    it('should prefer SolutionStackName over PlatformArn when both are set', async () => {
+      const { UpdateEnvironmentCommand } = require('@aws-sdk/client-elastic-beanstalk');
+      mockSend.mockResolvedValue({});
+      await updateEnvironment(mockClients, 'app', 'env', 'v1.0.0', undefined, 'stack-name', 'arn:platform', 3, 1);
+      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ SolutionStackName: 'stack-name' })
+      );
+      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({ PlatformArn: expect.anything() })
+      );
+    });
   });
 
   describe('createEnvironment', () => {
