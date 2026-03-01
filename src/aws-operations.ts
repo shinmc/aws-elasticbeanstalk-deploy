@@ -451,6 +451,10 @@ export async function updateEnvironment(
     }
   }
 
+  if (solutionStackName && platformArn) {
+    throw new Error('Cannot specify both solution-stack-name and platform-arn. These options are mutually exclusive.');
+  }
+
   await retryWithBackoff(
     async () => {
       const commandParams: UpdateEnvironmentCommandInput = {
@@ -493,6 +497,10 @@ export async function createEnvironment(
   retryDelay: number
 ): Promise<void> {
   core.info(`🆕 Creating new environment: ${environmentName}`);
+
+  if (solutionStackName && platformArn) {
+    throw new Error('Cannot specify both solution-stack-name and platform-arn. These options are mutually exclusive.');
+  }
 
   const optionSettings = parseJsonInput(optionSettingsJson, 'option-settings');
 

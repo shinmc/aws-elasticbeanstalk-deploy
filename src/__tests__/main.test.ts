@@ -323,16 +323,9 @@ describe('Main Functions', () => {
       );
     });
 
-    it('should prefer SolutionStackName over PlatformArn when both are set', async () => {
-      const { UpdateEnvironmentCommand } = require('@aws-sdk/client-elastic-beanstalk');
-      mockSend.mockResolvedValue({});
-      await updateEnvironment(mockClients, 'app', 'env', 'v1.0.0', undefined, 'stack-name', 'arn:platform', 3, 1);
-      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ SolutionStackName: 'stack-name' })
-      );
-      expect(UpdateEnvironmentCommand).toHaveBeenCalledWith(
-        expect.not.objectContaining({ PlatformArn: expect.anything() })
-      );
+    it('should throw when both SolutionStackName and PlatformArn are set', async () => {
+      await expect(updateEnvironment(mockClients, 'app', 'env', 'v1.0.0', undefined, 'stack-name', 'arn:platform', 3, 1))
+        .rejects.toThrow('Cannot specify both solution-stack-name and platform-arn');
     });
   });
 
@@ -379,16 +372,9 @@ describe('Main Functions', () => {
       );
     });
 
-    it('should prefer SolutionStackName over PlatformArn when both are set', async () => {
-      const { CreateEnvironmentCommand } = require('@aws-sdk/client-elastic-beanstalk');
-      mockSend.mockResolvedValue({});
-      await createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[]', 'stack-name', 'arn:platform', undefined, 3, 1);
-      expect(CreateEnvironmentCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ SolutionStackName: 'stack-name' })
-      );
-      expect(CreateEnvironmentCommand).toHaveBeenCalledWith(
-        expect.not.objectContaining({ PlatformArn: expect.anything() })
-      );
+    it('should throw when both SolutionStackName and PlatformArn are set', async () => {
+      await expect(createEnvironment(mockClients, 'app', 'env', 'v1.0.0', '[]', 'stack-name', 'arn:platform', undefined, 3, 1))
+        .rejects.toThrow('Cannot specify both solution-stack-name and platform-arn');
     });
   });
 
