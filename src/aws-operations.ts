@@ -451,10 +451,6 @@ export async function updateEnvironment(
     }
   }
 
-  if (solutionStackName && platformArn) {
-    throw new Error('Cannot specify both solution-stack-name and platform-arn. These options are mutually exclusive.');
-  }
-
   await retryWithBackoff(
     async () => {
       const commandParams: UpdateEnvironmentCommandInput = {
@@ -463,6 +459,8 @@ export async function updateEnvironment(
         VersionLabel: versionLabel,
         OptionSettings: parsedOptionSettings,
       };
+
+      // Only set one of SolutionStackName or PlatformArn
       if (solutionStackName) {
         commandParams.SolutionStackName = solutionStackName;
       } else if (platformArn) {
@@ -498,10 +496,6 @@ export async function createEnvironment(
 ): Promise<void> {
   core.info(`🆕 Creating new environment: ${environmentName}`);
 
-  if (solutionStackName && platformArn) {
-    throw new Error('Cannot specify both solution-stack-name and platform-arn. These options are mutually exclusive.');
-  }
-
   const optionSettings = parseJsonInput(optionSettingsJson, 'option-settings');
 
   await retryWithBackoff(
@@ -511,15 +505,13 @@ export async function createEnvironment(
         EnvironmentName: environmentName,
         VersionLabel: versionLabel,
         OptionSettings: optionSettings,
+        ...(cnamePrefix ? { CNAMEPrefix: cnamePrefix } : {}),
+        ...(solutionStackName
+          ? { SolutionStackName: solutionStackName }
+          : platformArn
+            ? { PlatformArn: platformArn }
+            : {}),
       };
-      if (cnamePrefix) {
-        commandParams.CNAMEPrefix = cnamePrefix;
-      }
-      if (solutionStackName) {
-        commandParams.SolutionStackName = solutionStackName;
-      } else if (platformArn) {
-        commandParams.PlatformArn = platformArn;
-      }
 
       const command = new CreateEnvironmentCommand(commandParams);
 
