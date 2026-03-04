@@ -92441,6 +92441,7 @@ async function createZipFile(zipFileName, excludePatterns) {
         const output = fs.createWriteStream(zipFileName);
         const archive = (0, archiver_1.default)('zip');
         output.on('close', () => resolve());
+        output.on('error', reject);
         archive.on('error', reject);
         archive.pipe(output);
         archive.glob('**/*', { ignore: excludePatterns, dot: true });
