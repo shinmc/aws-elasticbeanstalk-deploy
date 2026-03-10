@@ -1,0 +1,273 @@
+name: Integration Test
+
+on:
+  # Triggers when a PR review is submitted (we filter for 'approved' later)
+  pull_request_review:
+    types: [submitted]
+  # Allows you to run this manually from the "Actions" tab
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for requesting the JWT for AWS OIDC auth
+  contents: read    # Required for actions/checkout to fetch code
+
+concurrency:
+  # Groups by PR number (or branch for manual runs) so only one test runs per PR.
+  # cancel-in-progress: false ensures we don't kill a run mid-deploy, which corrupts AWS state.
+  group: integ-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integ-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    # Logic Gate: Only run if it's a manual trigger OR the PR was explicitly approved
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+
+    env:
+      AWS_REGION: us-east-1
+      # Unique naming per run ensures PRs don't collide
+      APP_NAME: eb-test-${{ github.event.pull_request.number || 'manual' }}-${{ github.run_id }}
+      ENV_NAME: it-${{ github.event.pull_request.number || 'manual' }}-${{ github.run_id }}
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Pre-emptive Masking
+        shell: bash
+        env:
+          M_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          M_ROLE: ${{ secrets.AWS_ROLE_ID }}
+        run: |
+          set +x # Disable command echoing
+          # Register masks
+          echo "::add-mask::$M_ACCOUNT"
+          echo "::add-mask::$M_ROLE"
+          echo "::add-mask::Authenticated as assumedRoleId"
+          set -x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+
+      - name: Build action
+        run: |
+          npm ci
+          npm run build
+
+      - name: Create test application zip
+        run: |
+          cd integ-test
+          zip -r ../test-app.zip application.py
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.INTEG_TEST_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: 'true'
+          role-session-name: GitHubActions
+
+      - name: Get latest Python platform
+        id: platform
+        shell: bash
+        run: |
+          set +x
+          BRANCH=$(aws elasticbeanstalk list-platform-branches \
+            --filters \
+              '[{"Attribute":"BranchName","Operator":"contains","Values":["Python"]},{"Attribute":"LifecycleState","Operator":"=","Values":["Supported"]}]' \
+            --query "PlatformBranchSummaryList | sort_by(@, &BranchOrder) | [-1].BranchName" \
+            --output text)
+          PLATFORM_ARN="arn:aws:elasticbeanstalk:::platform/${BRANCH}"
+          echo "Using platform: $PLATFORM_ARN"
+          echo "name=$PLATFORM_ARN" >> "$GITHUB_OUTPUT"
+          set -x
+
+      - name: Deploy - Create Environment
+        id: deploy-create
+        uses: ./ # Points to the action in the current repository
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          application-name: ${{ env.APP_NAME }}
+          environment-name: ${{ env.ENV_NAME }}
+          version-label: create-${{ github.run_id }}
+          deployment-package-path: test-app.zip
+          platform-arn: ${{ steps.platform.outputs.name }}
+          create-environment-if-not-exists: 'true'
+          create-application-if-not-exists: 'true'
+          wait-for-deployment: 'false'
+          wait-for-environment-recovery: 'false'
+          option-settings: |
+            [
+              {"Namespace": "aws:autoscaling:launchconfiguration", "OptionName": "IamInstanceProfile", "Value": "aws-elasticbeanstalk-ec2-role"},
+              {"Namespace": "aws:elasticbeanstalk:environment", "OptionName": "ServiceRole", "Value": "aws-elasticbeanstalk-service-role"}
+            ]
+
+      - name: Wait for Create
+        shell: bash
+        run: |
+          set +x
+          echo "⏳ Waiting for environment launch (10m timeout)..."
+
+          TIMEOUT_SECONDS=600
+          START_TIME=$(date +%s)
+          END_TIME=$((START_TIME + TIMEOUT_SECONDS))
+
+          while true; do
+            if [ "$(date +%s)" -gt "$END_TIME" ]; then
+              echo "::error::Create timed out after 10 minutes."
+              exit 1
+            fi
+
+            ENV_INFO=$(aws elasticbeanstalk describe-environments --environment-names "${{ env.ENV_NAME }}" --region "${{ env.AWS_REGION }}" --query "Environments[0].[Status,Health]" --output text)
+            STATUS=$(echo "$ENV_INFO" | awk '{print $1}')
+            HEALTH=$(echo "$ENV_INFO" | awk '{print $2}')
+
+            if [ "$STATUS" == "Ready" ]; then
+              if [[ "$HEALTH" == "Green" || "$HEALTH" == "Ok" || "$HEALTH" == "Yellow" ]]; then
+                echo "✅ Create Ready (Health: $HEALTH)"
+                break
+              elif [ "$HEALTH" == "Red" ]; then
+                echo "::error::Create Ready but Health is Red."
+                exit 1
+              fi
+              echo "...Ready but Health is $HEALTH. Waiting for healthy status..."
+              sleep 15
+              continue
+            fi
+            echo "...status is $STATUS ($HEALTH). Checking again in 15s..."
+            sleep 15
+          done
+          set -x
+
+      - name: Verify and Mask Create Outputs
+        shell: bash
+        env:
+          ENV_URL: ${{ steps.deploy-create.outputs.environment-url }}
+          ENV_ID: ${{ steps.deploy-create.outputs.environment-id }}
+          ACTION_TYPE: ${{ steps.deploy-create.outputs.deployment-action-type }}
+        run: |
+          set +x
+          echo "::add-mask::$ENV_URL"
+          echo "::add-mask::$ENV_ID"
+
+          if [ "$ACTION_TYPE" != "create" ]; then
+            echo "::error::Expected create, got $ACTION_TYPE"
+            exit 1
+          fi
+          set -x
+
+      - name: Pre-mask Update Details
+        shell: bash
+        run: |
+          set +x
+          URL=$(aws elasticbeanstalk describe-environments \
+            --environment-names "${{ env.ENV_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query "Environments[0].CNAME" --output text)
+          
+          echo "::add-mask::$URL"
+          echo "::add-mask::update-${{ github.run_id }}"
+          set -x
+
+      - name: Deploy - Update Environment
+        id: deploy-update
+        uses: ./
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          application-name: ${{ env.APP_NAME }}
+          environment-name: ${{ env.ENV_NAME }}
+          version-label: update-${{ github.run_id }}
+          deployment-package-path: test-app.zip
+          wait-for-deployment: 'false'
+          wait-for-environment-recovery: 'false'
+
+      - name: Wait for Update
+        shell: bash
+        run: |
+          set +x
+          echo "⏳ Waiting for environment update (10m timeout)..."
+
+          TIMEOUT_SECONDS=600
+          START_TIME=$(date +%s)
+          END_TIME=$((START_TIME + TIMEOUT_SECONDS))
+
+          while true; do
+            if [ "$(date +%s)" -gt "$END_TIME" ]; then
+              echo "::error::Update timed out after 10 minutes."
+              exit 1
+            fi
+
+            ENV_INFO=$(aws elasticbeanstalk describe-environments --environment-names "${{ env.ENV_NAME }}" --region "${{ env.AWS_REGION }}" --query "Environments[0].[Status,Health]" --output text)
+            STATUS=$(echo "$ENV_INFO" | awk '{print $1}')
+            HEALTH=$(echo "$ENV_INFO" | awk '{print $2}')
+
+            if [ "$STATUS" == "Ready" ]; then
+              if [[ "$HEALTH" == "Green" || "$HEALTH" == "Ok" || "$HEALTH" == "Yellow" ]]; then
+                echo "✅ Update Ready (Health: $HEALTH)"
+                break
+              elif [ "$HEALTH" == "Red" ]; then
+                echo "::error::Update Ready but Health is Red."
+                exit 1
+              fi
+              echo "...Ready but Health is $HEALTH. Waiting for healthy status..."
+              sleep 15
+              continue
+            fi
+            echo "...updating: $STATUS ($HEALTH). Checking again in 15s..."
+            sleep 15
+          done
+          set -x
+
+      - name: Verify and Mask Update Outputs
+        shell: bash
+        env:
+          ENV_URL: ${{ steps.deploy-update.outputs.environment-url }}
+          ENV_ID: ${{ steps.deploy-update.outputs.environment-id }}
+          ACTION_TYPE: ${{ steps.deploy-update.outputs.deployment-action-type }}
+        run: |
+          set +x
+          echo "::add-mask::$ENV_URL"
+          echo "::add-mask::$ENV_ID"
+
+          if [ "$ACTION_TYPE" != "update" ]; then
+            echo "::error::Expected update, got $ACTION_TYPE"
+            exit 1
+          fi
+          set -x
+
+      - name: Cleanup
+        if: always() # Ensures cleanup runs even if tests fail
+        shell: bash
+        run: |
+          set +x
+          echo "Cleaning up resources (10m timeout)..."
+          # Silently initiate termination
+          aws elasticbeanstalk terminate-environment --environment-name "${{ env.ENV_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1 || true
+          
+          TIMEOUT_SECONDS=600
+          START_TIME=$(date +%s)
+          END_TIME=$((START_TIME + TIMEOUT_SECONDS))
+
+          while true; do
+            if [ "$(date +%s)" -gt "$END_TIME" ]; then
+              echo "::warning::Cleanup timed out."
+              break
+            fi
+
+            # Checks if the environment list length is 0 (meaning it's gone)
+            EXIST_CHECK=$(aws elasticbeanstalk describe-environments --environment-names "${{ env.ENV_NAME }}" --region "${{ env.AWS_REGION }}" --query "length(Environments[?Status!='Terminated'])" --output text 2>/dev/null || echo "0")
+            if [ "$EXIST_CHECK" == "0" ]; then
+              echo "✅ Environment terminated."
+              break
+            fi
+            echo "...still terminating. Checking again in 60s..."
+            sleep 60
+          done
+
+          # Final delete of the app container and all its versions
+          aws elasticbeanstalk delete-application --application-name "${{ env.APP_NAME }}" --terminate-env-by-force --region "${{ env.AWS_REGION }}" > /dev/null 2>&1 || true
+          set -x
